@@ -5450,16 +5450,29 @@ class ManagerTest extends TestCase
 
     public function testOrderSeeds()
     {
-        $seeds = array_values($this->manager->getSeeds());
+        $seeds = array_values($this->manager->getSeeds('mockenv'));
         $this->assertInstanceOf('UserSeeder', $seeds[0]);
         $this->assertInstanceOf('GSeeder', $seeds[1]);
         $this->assertInstanceOf('PostSeeder', $seeds[2]);
     }
 
+    public function testSeedWillNotBeExecuted()
+    {
+        // stub environment
+        $envStub = $this->getMockBuilder('\Phinx\Migration\Manager\Environment')
+            ->setConstructorArgs(['mockenv', []])
+            ->getMock();
+        $this->manager->setEnvironments(['mockenv' => $envStub]);
+        $this->manager->seed('mockenv', 'UserSeederNotExecuted');
+        rewind($this->manager->getOutput()->getStream());
+        $output = stream_get_contents($this->manager->getOutput()->getStream());
+        $this->assertStringContainsString('skipped', $output);
+    }
+
     public function testGettingInputObject()
     {
         $migrations = $this->manager->getMigrations('mockenv');
-        $seeds = $this->manager->getSeeds();
+        $seeds = $this->manager->getSeeds('mockenv');
         $inputObject = $this->manager->getInput();
         $this->assertInstanceOf('\Symfony\Component\Console\Input\InputInterface', $inputObject);
 
@@ -5474,7 +5487,7 @@ class ManagerTest extends TestCase
     public function testGettingOutputObject()
     {
         $migrations = $this->manager->getMigrations('mockenv');
-        $seeds = $this->manager->getSeeds();
+        $seeds = $this->manager->getSeeds('mockenv');
         $outputObject = $this->manager->getOutput();
         $this->assertInstanceOf('\Symfony\Component\Console\Output\OutputInterface', $outputObject);
 
@@ -6062,5 +6075,34 @@ class ManagerTest extends TestCase
         rewind($this->manager->getOutput()->getStream());
         $outputStr = stream_get_contents($this->manager->getOutput()->getStream());
         $this->assertEquals('warning 20120133235330 is not a valid version', trim($outputStr));
+    }
+
+    public function testMigrationWillNotBeExecuted()
+    {
+        if (!defined('MYSQL_DB_CONFIG')) {
+            $this->markTestSkipped('Mysql tests disabled.');
+        }
+        $configArray = $this->getConfigArray();
+        $adapter = $this->manager->getEnvironment('production')->getAdapter();
+
+        // override the migrations directory to use the should execute migrations
+        $configArray['paths']['migrations'] = $this->getCorrectedPath(__DIR__ . '/_files/should_execute');
+        $config = new Config($configArray);
+
+        // ensure the database is empty
+        $adapter->dropDatabase(MYSQL_DB_CONFIG['name']);
+        $adapter->createDatabase(MYSQL_DB_CONFIG['name']);
+        $adapter->disconnect();
+
+        // Run the migration with shouldExecute returning false: the table should not be created
+        $this->manager->setConfig($config);
+        $this->manager->migrate('production', '20201207205056');
+
+        $this->assertFalse($adapter->hasTable('info'));
+
+        // Run the migration with shouldExecute returning true: the table should be created
+        $this->manager->migrate('production', '20201207205057');
+
+        $this->assertTrue($adapter->hasTable('info'));
     }
 }
